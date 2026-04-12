@@ -1,34 +1,42 @@
-# 1. Сначала ГАРАНТИРОВАННО делаем диск доступным на запись
-mount -o remount,rw /dev/nvme0n1p4 /mnt/repair
+# 1. Убеждаемся, что диск доступен для записи
+mount -o remount,rw /repair
 
-# 2. Переходим в папку для работы
+# 2. Выключаем ядовитую переменную, которая ломала dpkg-deb в прошлый раз
+unset LD_LIBRARY_PATH
+
+# 3. Подготовка
 T=/repair
-cd /tmp; mkdir -p fix; cd fix
+mkdir -p /tmp/fix
+cd /tmp/fix
 
-# 3. Прямые ссылки с mirror.yandex.ru (версии Noble 24.04)
-Y="http://mirror.yandex.ru/ubuntu/pool/main"
+echo "--- ИЩУ И СКАЧИВАЮ АКТУАЛЬНЫЕ ПАКЕТЫ ---"
+# Эта функция сама читает сайт и берет точное имя файла (без 404)
+get_deb() {
+    URL="$1"
+    PATTERN="$2"
+    FILE=$(wget -qO- "$URL" | grep -o "href=\"$PATTERN\"" | cut -d'"' -f2 | head -n 1)
+    echo "Качаю $FILE..."
+    wget "$URL$FILE"
+}
 
-echo "--- СКАЧИВАЮ ПАКЕТЫ С ЯНДЕКСА ---"
-wget $Y/g/glibc/libc6_2.39-0ubuntu8.3_amd64.deb
-wget $Y/z/zlib/zlib1g_1.3.1.dfsg-1ubuntu1_amd64.deb
-wget $Y/g/gcc-14/libstdc++6_14-20240412-0ubuntu1_amd64.deb
-wget $Y/n/ncurses/libtinfo6_6.4+20240113-1ubuntu2_amd64.deb
+get_deb "http://mirror.yandex.ru/ubuntu/pool/main/g/glibc/" "libc6_2.39-[^\"]*amd64.deb"
+get_deb "http://mirror.yandex.ru/ubuntu/pool/main/z/zlib/" "zlib1g_1.3[^\"]*amd64.deb"
+get_deb "http://mirror.yandex.ru/ubuntu/pool/main/g/gcc-14/" "libstdc++6_14[^\"]*amd64.deb"
+get_deb "http://mirror.yandex.ru/ubuntu/pool/main/n/ncurses/" "libtinfo6_6.4[^\"]*amd64.deb"
 
-# 4. Распаковка силами BusyBox
-echo "--- РАСПАКОВКА В СИСТЕМУ ---"
+echo "--- РАСПАКОВКА В /repair ---"
+# Используем нормальный dpkg-deb хоста. Он сам поймет формат .zst и распакует всё как надо.
 for f in *.deb; do 
-    busybox ar x $f
-    busybox tar -xJf data.tar.xz -C $T
-    rm -f data.tar.xz control.tar.gz debian-binary
+    echo "Извлекаю $f..."
+    dpkg-deb -x "$f" $T
 done
 
-# 5. Чиним КРИТИЧЕСКИЕ пути (линкер и системные ссылки)
-echo "--- ФИНАЛЬНАЯ НАСТРОЙКА ---"
-busybox mkdir -p $T/lib64
-busybox ln -sf /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 $T/lib64/ld-linux-x86-64.so.2
-busybox ln -sf usr/lib $T/lib
-busybox ln -sf usr/bin $T/bin
-busybox cp /etc/resolv.conf $T/etc/resolv.conf
+echo "--- СТАВЛЮ ССЫЛКИ НА МЕСТО ---"
+mkdir -p $T/lib64
+cp -L $T/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 $T/lib64/ld-linux-x86-64.so.2
+ln -sf usr/lib $T/lib
+ln -sf usr/bin $T/bin
+cp /etc/resolv.conf $T/etc/resolv.conf
 
-echo "--- ГОТОВО. ПРОБУЕМ ЗАЙТИ ---"
+echo "--- ПРОБУЕМ ВХОД ---"
 chroot $T /bin/bash
