@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 T=/repair
 
 echo "=== Монтируем rw и чистим окружение ==="
@@ -37,3 +37,32 @@ for deb in *.deb; do
             *.xz)  tar -C "$T" --overwrite -xJf "$datafile" ;;
             *.zst) tar -C "$T" --overwrite --zstd -xf "$datafile" 2>/dev/null || zstd -qdc "$datafile" | tar -C "$T" --overwrite -xf - ;;
             *.gz)  tar -C "$T" --overwrite -xzf "$datafile" ;;
+            *.bz2) tar -C "$T" --overwrite -xjf "$datafile" ;;
+            *)     tar -C "$T" --overwrite -xf "$datafile" ;;
+        esac
+        echo "   ✓ распаковано"
+    fi
+    rm -f *.tar.* debian-binary control.tar.* 2>/dev/null
+done
+
+echo "=== Восстанавливаем симлинки и ld-linux ==="
+mkdir -p $T/lib64 $T/usr/lib $T/usr/bin $T/var/lib/dpkg
+cp -a $T/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 $T/lib64/ 2>/dev/null || true
+ln -sfn usr/lib $T/lib
+ln -sfn usr/lib $T/lib64
+ln -sfn usr/bin $T/bin
+cp -f /etc/resolv.conf $T/etc/resolv.conf 2>/dev/null || true
+
+# Монтируем всё необходимое
+mount --bind /proc $T/proc 2>/dev/null || true
+mount --bind /sys  $T/sys  2>/dev/null || true
+mount --bind /dev  $T/dev  2>/dev/null || true
+mount --bind /run  $T/run  2>/dev/null || true
+mount --bind /dev/pts $T/dev/pts 2>/dev/null || true
+
+echo "=== Готово ==="
+echo "Теперь пытаемся зайти. После входа сразу выполняй:"
+echo "    apt update && apt install --reinstall -y dpkg apt libc6"
+echo ""
+
+chroot $T /bin/bash --login
