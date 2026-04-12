@@ -1,51 +1,39 @@
 #!/bin/sh
-set -e
-
 T=/repair
 
-echo "=== Ремонт системы в $T ==="
-
-# 1. Делаем доступным для записи
+echo "=== Монтируем rw и чистим окружение ==="
 mount -o remount,rw $T 2>/dev/null || true
-
-# 2. Убираем ядовитую переменную
 unset LD_LIBRARY_PATH
 
 cd /tmp
-rm -rf fix-lib
-mkdir fix-lib && cd fix-lib
+rm -rf fix-apt && mkdir fix-apt && cd fix-apt
 
-echo "=== Скачиваем актуальные пакеты ==="
+echo "=== Качаем пакеты ==="
 
-wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/g/glibc/libc6_2.39-0ubuntu8.7_amd64.deb
+wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/g/glibc/libc6_2.43-2ubuntu2_amd64.deb
 wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/g/gcc-14/libgcc-s1_14.2.0-4ubuntu2~24.04.1_amd64.deb
 wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/g/gcc-14/libstdc++6_14.2.0-4ubuntu2~24.04.1_amd64.deb
+
+wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/d/dpkg/dpkg_1.22.21ubuntu3.1_amd64.deb
+
+wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/a/apt/libapt-pkg7.0_3.2.0_amd64.deb
+wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/a/apt/apt_3.2.0_amd64.deb
+
+# Критические библиотеки
 wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/z/zlib/zlib1g_1.3.dfsg+really1.3.1-1ubuntu3_amd64.deb
-# wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/n/ncurses/libtinfo6_6.4+20240113-1ubuntu2_amd64.deb  # раскомментируй если нужен
+wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/libz/libzstd/libzstd1_1.5.7+dfsg-3_amd64.deb
+wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/x/xz-utils/liblzma5_5.8.3-1_amd64.deb
+wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/b/bzip2/libbz2-1.0_1.0.8-6_amd64.deb
+wget -q --show-progress http://mirror.yandex.ru/ubuntu/pool/main/libs/libselinux/libselinux1_3.9-4build1_amd64.deb
 
-echo "=== Распаковываем ==="
+echo "=== Распаковываем ТОЛЬКО через ar + tar (без dpkg-deb) ==="
 for deb in *.deb; do
-    echo "Извлекаю $deb..."
-    dpkg-deb -x "$deb" $T
-done
-
-echo "=== Настраиваем симлинки ==="
-mkdir -p $T/lib64
-cp -a $T/usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 $T/lib64/ 2>/dev/null || true
-ln -sf usr/lib $T/lib
-ln -sf usr/lib64 $T/lib64 2>/dev/null || true
-ln -sf usr/bin $T/bin
-
-# Копируем resolv.conf для интернета внутри chroot
-cp /etc/resolv.conf $T/etc/ 2>/dev/null || true
-
-echo "=== Готово! Пробуем войти ==="
-echo "Если войдёшь — сразу делай: apt update && apt upgrade -y"
-echo "-----------------------------------------------------"
-
-chroot $T /bin/bash --loginln -sf usr/lib $T/lib
-ln -sf usr/bin $T/bin
-cp /etc/resolv.conf $T/etc/resolv.conf
-
-echo "--- ПРОБУЕМ ВХОД ---"
-chroot $T /bin/bash
+    echo "→ $deb"
+    ar x "$deb"
+    
+    datafile=$(ls data.tar.* 2>/dev/null | head -n1)
+    if [ -n "$datafile" ]; then
+        case "$datafile" in
+            *.xz)  tar -C "$T" --overwrite -xJf "$datafile" ;;
+            *.zst) tar -C "$T" --overwrite --zstd -xf "$datafile" 2>/dev/null || zstd -qdc "$datafile" | tar -C "$T" --overwrite -xf - ;;
+            *.gz)  tar -C "$T" --overwrite -xzf "$datafile" ;;
